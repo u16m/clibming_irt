@@ -2,6 +2,7 @@
 
 import numpy as np
 from math import exp, log, sqrt
+from scipy.stats import norm
 
 from logging import getLogger, StreamHandler, basicConfig, DEBUG
 
@@ -36,6 +37,7 @@ class IRT:
 
         self.epoch = 100000
         self.lr = 0.001
+        self.L = 0.001
 
         self.thresh = 0.0001
 
@@ -48,53 +50,48 @@ class IRT:
             return 1 / (1 + exp(n))
 
     def _get_derivation_for_alpha_beta(self, i, a, b, results, is_alpha):
-        d = (-1 + 2 * (log(a) - self.mu_a)) / a if is_alpha else -b
-        X, W = np.polynomial.hermite.hermgauss(self.tau)
 
-        for result in results:
+        d = -1 * (a - self.mu_a) / (self.sig_a ** 2) if is_alpha else norm.pdf(b, loc=self.mu_b, scale=self.sig_b)
+        for t, result in zip(self.theta, results):
             r = result[i]
-            for x, w in zip(X, W):
-                if r == 1:
-                    d += w * a * (1 - self.sigmoid(a, b, x))
-                else:
-                    d += w * -a * self.sigmoid(a, b, x)
-
-        return d
-
-    def gauss(self, x, mu, sig):
-        return (1 / (sqrt(2 * np.pi) * sig)) * exp(-1 * (x-mu)**2 /(2 * (sig**2)))
-
-    def get_derivation_for_alpha_beta(self, i, a, b, results, is_alpha):
-        d = -1 * (a - self.mu_a) / (self.sig_a ** 2) if is_alpha else self.gauss(b, self.mu_b, self.sig_b) *(-1 *(b-self.mu_b)/(self.sig_b**2))
-        #d = -1 * (a - self.mu_a) / (self.sig_a ** 2) if is_alpha else -1 * (b - self.mu_b) / (self.sig_b ** 2)
-        t = self.theta[i]
-        for result in results:
-            r = result[i]
-            # print(r, a, b, t, -a * (t - b), self.sigmoid(a, b, t), (b-t) * (1 - self.sigmoid(a, b, t)), (t-b) * self.sigmoid(a, b, t))
             if r == 1:
                 if is_alpha:
-                    d += (b-t) * (1 - self.sigmoid(a, b, t))
-                else:
+                    if (b - t) > 0:  # 増加関数
+                        d += (b - t) * (1 - self.sigmoid(a, b, t))
+                    else:
+                        d -= (b - t) * (1 - self.sigmoid(a, b, t))
+                else:  # 増加関数
                     d += a * (1 - self.sigmoid(a, b, t))
             else:
                 if is_alpha:
-                    d += (t-b) * self.sigmoid(a, b, t)
-                else:
-                    d += -a * self.sigmoid(a, b, t)
+                    if (t - b) > 0:  # 増加関数
+                        d += (t - b) * self.sigmoid(a, b, t)
+                    else:
+                        d -= (t - b) * self.sigmoid(a, b, t)
+                else:  # 減少関数
+                    d -= -a * self.sigmoid(a, b, t)
 
         return d
 
-    def _get_derivation_for_theta(self, t, result):
-        d = -t / (self.sig_t ** 2)
-        for a, b, r in zip(self.alpha, self.beta, result):
-            if r == 1:
-                d += a * (1 - self.sigmoid(a, b, t))
+    def get_derivation_for_alpha_beta(self, a, b, t, r, is_alpha):
+
+        d = -1 * (a - self.mu_a) / (self.sig_a ** 2) if is_alpha else (-1 * (b - self.mu_b) / (
+                    self.sig_b ** 2)) * norm.pdf(b, loc=self.mu_b, scale=self.sig_b)
+
+        if r == 1:
+            if is_alpha:
+                return d + ((b - t) * (1 - self.sigmoid(a, b, t)))
             else:
-                d += -a * self.sigmoid(a, b, t)
-        return d
+                return d + (a * (1 - self.sigmoid(a, b, t)))
+        else:
+            if is_alpha:
+                return d + ((t - b) * self.sigmoid(a, b, t))
+            else:
+                return d + (-a * self.sigmoid(a, b, t))
 
     def get_derivation_for_theta(self, t, result):
-        d = self.gauss(t, self.mu_t, self.sig_t) *(-1 *(t-self.mu_t)/(self.sig_t**2))
+        d = norm.pdf(t, loc=self.mu_t, scale=self.sig_t) * (-1 * (t - self.mu_t) / (self.sig_t ** 2))
+
         for a, b, r in zip(self.alpha, self.beta, result):
             if r == 1:
                 d += -a * (1 - self.sigmoid(a, b, t))
@@ -107,30 +104,32 @@ class IRT:
         for i in rand_index:
             a, b = self.alpha[i], self.beta[i]
 
-            # print(self.get_derivation_for_alpha_beta(i, a, b, results, is_alpha=True))
-            # print(self.get_derivation_for_alpha_beta(i, a, b, results, is_alpha=False))
+            for t, result in zip(self.theta, results):
+                r = result[i]
+                d_a = self.get_derivation_for_alpha_beta(a, b, t, r, is_alpha=True)
+                d_b = self.get_derivation_for_alpha_beta(a, b, t, r, is_alpha=False)
 
-            self.alpha[i] = a + self.lr * self.get_derivation_for_alpha_beta(i, a, b, results, is_alpha=True) - log(max(a, 10e-5))
-            self.beta[i] = b + self.lr * self.get_derivation_for_alpha_beta(i, a, b, results, is_alpha=False)
-
+                self.alpha[i] += self.lr * d_a - log(max(a, 10e-5)) - self.lr * self.L * a
+                self.beta[i] += self.lr * d_b - self.lr * self.L * b
 
     def predict_theta(self, results):
         rand_index = np.random.permutation(list(range(len(self.theta))))
         for i in rand_index:
             t = self.theta[i]
+            d_t = self.get_derivation_for_theta(t, results[i])
             # print(results[i], self.get_derivation_for_theta(t, results[i]))
-            self.theta[i] = t + self.lr * self.get_derivation_for_theta(t, results[i])
+            self.theta[i] += self.lr * d_t - self.lr * self.L * t
 
     def calc_log_likelihood(self, results):
         log_l = 0
         for t, result in zip(self.theta, results):
-            for a, b, r in zip(self.alpha, self.beta, result):
-                # print(r, a, b, t, -a * (t - b), self.sigmoid(a, b, t), 1-self.sigmoid(a, b, t))
+            for i, (a, b, r) in enumerate(zip(self.alpha, self.beta, result)):
+                # print(i, r, a, b, t, -a * (t - b), self.sigmoid(a, b, t), 1-self.sigmoid(a, b, t))
                 if r == 1:
                     log_l += log(self.sigmoid(a, b, t))
                 else:
                     if 1 - self.sigmoid(a, b, t) == 0:
-                        log_l += 0
+                        log_l += log(10e-5)
                     else:
                         log_l += log(1 - self.sigmoid(a, b, t))
         return log_l
