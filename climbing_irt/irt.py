@@ -2,7 +2,7 @@
 
 import numpy as np
 from math import exp, log, sqrt, pi
-from scipy.stats import norm
+from scipy.stats import norm, lognorm
 
 from logging import getLogger, StreamHandler, basicConfig, DEBUG
 
@@ -49,31 +49,12 @@ class IRT:
         else:
             return 1 / (1 + exp(n))
 
-    def _get_gradient_for_alpha_beta(self, a, b, t, r, is_alpha):
-
-        d = -1 * (a - self.mu_a) / (self.sig_a ** 2) if is_alpha else (-1 * (b - self.mu_b) / (
-                    self.sig_b ** 2)) * norm.pdf(b, loc=self.mu_b, scale=self.sig_b)
-
-        if r == 1:
-            if is_alpha:
-                return d + ((b - t) * (1 - self.sigmoid(a, b, t)))
-            else:
-                return d + (a * (1 - self.sigmoid(a, b, t)))
-        else:
-            if is_alpha:
-                return d + ((t - b) * self.sigmoid(a, b, t))
-            else:
-                return d + (-a * self.sigmoid(a, b, t))
-
     def get_gradient_for_alpha_beta(self, a, b, t, r, is_alpha, deg=21):
-        d = -1 * (a - self.mu_a) / (self.sig_a ** 2) if is_alpha else (-1 * (b - self.mu_b) / (
-                self.sig_b ** 2)) * norm.pdf(b, loc=self.mu_b, scale=self.sig_b)
-
         X, W = np.polynomial.hermite.hermgauss(deg)
 
-        h = 0 # 分母
-        g = 0 # 分子
-        f = 1 / sqrt(pi) # 約分して消える
+        h = 0  # 分母
+        g = 0  # 分子
+
         tau = sqrt(2)
         for x, w in zip(X, W):
             t = (tau * self.sig_t * x) + self.mu_t
@@ -81,38 +62,31 @@ class IRT:
             if r == 1:
                 h += w * self.sigmoid(a, b, t)
                 if is_alpha:
-                    #d += ((b - t) * (1 - self.sigmoid(a, b, t)))
-
-                    g += ((b - t) * self.sigmoid(a, b, t) * (1 - self.sigmoid(a, b, t))) * w
+                    g += ((t - b) * self.sigmoid(a, b, t) * (1 - self.sigmoid(a, b, t))) * w
 
                 else:
-                    #d += (a * (1 - self.sigmoid(a, b, t)))
-
-                    g += (a * self.sigmoid(a, b, t) * (1 - self.sigmoid(a, b, t))) * w
-
-            else:
-                h += w * (1 -self.sigmoid(a, b, t))
-                if is_alpha:
-                    #d += ((t - b) * self.sigmoid(a, b, t))
-
-                    g += ((t - b) * self.sigmoid(a, b, t)) * (1 - self.sigmoid(a, b, t)) * w
-
-                else:
-                    #d += (-a * self.sigmoid(a, b, t))
-
                     g += (-a * self.sigmoid(a, b, t) * (1 - self.sigmoid(a, b, t))) * w
-        d = (g/h)
+            else:
+                h += w * (1 - self.sigmoid(a, b, t))
+                if is_alpha:
+                    g += ((b - t) * self.sigmoid(a, b, t)) * (1 - self.sigmoid(a, b, t)) * w
+
+                else:
+                    g += (a * self.sigmoid(a, b, t) * (1 - self.sigmoid(a, b, t))) * w
+        d = (g / h)
         return d
 
     def get_gradient_for_theta(self, t, result):
-        # d = norm.pdf(t, loc=self.mu_t, scale=self.sig_t) * (-1 * (t - self.mu_t) / (self.sig_t ** 2))
         d = (-1 * (t - self.mu_t) / (self.sig_t ** 2))
 
         for a, b, r in zip(self.alpha, self.beta, result):
+            if r > 1:
+                continue
+
             if r == 1:
-                d += -a * (1 - self.sigmoid(a, b, t))
+                d += a * (1 - self.sigmoid(a, b, t))
             else:
-                d += a * self.sigmoid(a, b, t)
+                d += -a * self.sigmoid(a, b, t)
         return d
 
     def predict_alpha_beta(self, results):
@@ -120,34 +94,40 @@ class IRT:
         for i in rand_index:
             a, b = self.alpha[i], self.beta[i]
 
-            d_a, d_b = 0, 0
-            d_a = (-1 * (a - self.mu_a) / (self.sig_a ** 2)) / log(norm.pdf(a, loc=self.mu_a, scale=self.sig_a))
-            d_b = (-1 * (b - self.mu_b) / (self.sig_b ** 2))
+            d_a = -(1 / a) - ((log(a) - self.mu_a) / a * (self.sig_a) ** 2)
+            d_b = -(b - self.mu_b) / (self.sig_b ** 2)
             for t, result in zip(self.theta, results):
                 r = result[i]
+                if r > 1:
+                    continue
+
                 d_a += self.get_gradient_for_alpha_beta(a, b, t, r, is_alpha=True)
                 d_b += self.get_gradient_for_alpha_beta(a, b, t, r, is_alpha=False)
 
-            self.alpha[i] += self.lr * d_a - log(max(a, 10e-5))# - self.lr * self.L * a
-            self.beta[i] += self.lr * d_b# - self.lr * self.L * b
+            self.alpha[i] += self.lr * d_a - log(max(a, 10e-5))  # aが正なのでバリア関数を設定
+            self.beta[i] += self.lr * d_b
 
     def predict_theta(self, results):
         rand_index = np.random.permutation(list(range(len(self.theta))))
         for i in rand_index:
             t = self.theta[i]
             d_t = self.get_gradient_for_theta(t, results[i])
-            # print(results[i], self.get_derivation_for_theta(t, results[i]))
-            self.theta[i] += self.lr * d_t# - self.lr * self.L * t
+            self.theta[i] += self.lr * d_t
 
     def calc_log_likelihood(self, results):
         log_l = 0
-        log_l += sum(norm.pdf(t, loc=self.mu_t, scale=self.sig_t) for t in self.theta)
-        log_l += sum(log(norm.pdf(a, loc=self.mu_a, scale=self.sig_a)) for a in self.alpha)
-        log_l += sum(norm.pdf(b, loc=self.mu_b, scale=self.sig_b) for b in self.beta)
+        log_l += sum(log(norm.pdf(t, loc=self.mu_t, scale=self.sig_t)) for t in self.theta)
+        log_l += sum(log(lognorm.pdf((a - self.mu_a) / self.sig_a, 1) / self.sig_a) for a in self.alpha)
+        log_l += sum(log(norm.pdf(b, loc=self.mu_b, scale=self.sig_b)) for b in self.beta)
+
+        print(log_l)
 
         for t, result in zip(self.theta, results):
             for i, (a, b, r) in enumerate(zip(self.alpha, self.beta, result)):
                 # print(i, r, a, b, t, -a * (t - b), self.sigmoid(a, b, t), 1-self.sigmoid(a, b, t))
+                if r > 1:
+                    continue
+
                 if r == 1:
                     log_l += log(self.sigmoid(a, b, t))
                 else:

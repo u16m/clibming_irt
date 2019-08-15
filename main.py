@@ -4,7 +4,7 @@ import pandas as pd
 from climbing_irt.irt import IRT
 
 data = pd.read_csv('data/IFSC_worldcup.csv').set_index('Name')
-results = list(data.fillna(0).values)
+results = list(data.fillna(2).values)
 
 # #test
 # import numpy as np
@@ -14,6 +14,18 @@ results = list(data.fillna(0).values)
 #                     index=[f'climber_{i}' for i in range(test_climber_size)],
 #                     columns=[f'problem_{i}' for i in range(test_problem_size)])
 # results = list(data.fillna(0).values)
+
+# # test
+# data = pd.DataFrame(
+#     [
+#         [1, 1, 1],
+#         [1, 1, 0],
+#         [1, 0, 0]
+#     ],
+#     index=['climber_0', 'climber_1', 'climber_2'],
+#     columns=['problem_0', 'problem_1', 'problem_2']
+# )
+# results = list(data.fillna(2).values)
 
 
 num_climbers, num_problems = data.shape
