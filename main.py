@@ -4,7 +4,7 @@ import pandas as pd
 from climbing_irt.irt import IRT
 
 data = pd.read_csv('data/IFSC_worldcup.csv').set_index('Name')
-results = list(data.fillna(2).values)
+results = list(data.fillna(0).values)
 
 # #test
 # import numpy as np

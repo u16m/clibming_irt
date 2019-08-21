@@ -39,7 +39,7 @@ class IRT:
         self.lr = 0.001
         self.L = 0
 
-        self.thresh = 0.0001
+        self.thresh = 0.001
 
     @classmethod
     def sigmoid(cls, a, b, x):
@@ -119,8 +119,6 @@ class IRT:
         log_l += sum(log(norm.pdf(t, loc=self.mu_t, scale=self.sig_t)) for t in self.theta)
         log_l += sum(log(lognorm.pdf((a - self.mu_a) / self.sig_a, 1) / self.sig_a) for a in self.alpha)
         log_l += sum(log(norm.pdf(b, loc=self.mu_b, scale=self.sig_b)) for b in self.beta)
-
-        print(log_l)
 
         for t, result in zip(self.theta, results):
             for i, (a, b, r) in enumerate(zip(self.alpha, self.beta, result)):
