@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 import requests
 
 BASE_URL = 'https://components.ifsc-climbing.org'
+logger = logging.getLogger(__name__)
 
 
 class IFSCScraper:
@@ -49,12 +51,14 @@ class IFSCScraper:
     def get_json(self, params: dict[str, Any]) -> Any:
         cache_file = self._cache_path(params)
         if cache_file.exists():
+            logger.info('cache hit: %s %s', params.get('api'), cache_file.name)
             with cache_file.open('r', encoding='utf-8') as f:
                 return json.load(f)
 
         last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
+                logger.info('fetching: %s params=%s attempt=%s/%s', params.get('api'), params, attempt + 1, self.max_retries)
                 response = self.session.get(
                     f'{BASE_URL}/results-api.php',
                     params=params,
@@ -67,36 +71,46 @@ class IFSCScraper:
                 with cache_file.open('w', encoding='utf-8') as f:
                     json.dump(payload, f, ensure_ascii=False, indent=2)
 
+                logger.info('saved: %s', cache_file)
                 time.sleep(self.sleep_seconds)
                 return payload
             except (requests.RequestException, json.JSONDecodeError, ValueError) as exc:
                 last_error = exc
                 wait = min(60.0, self.sleep_seconds * (2 ** attempt))
+                logger.warning('request failed: %s params=%s retry_in=%.1fs', exc, params, wait)
                 time.sleep(wait)
 
         raise RuntimeError(f'Failed to fetch params={params}') from last_error
 
     def scrape_all(self) -> dict[str, Any]:
+        logger.info('start scrape_all')
         index = self.get_json({'api': 'index'})
 
         all_data: dict[str, Any] = {'index': index, 'leagues': {}, 'events': {}}
         seasons = index.get('seasons', [])
-        for season in seasons:
-            for league in season.get('leagues', []):
+        logger.info('seasons discovered: %s', len(seasons))
+        for season_idx, season in enumerate(seasons, start=1):
+            leagues = season.get('leagues', [])
+            logger.info('season %s/%s: %s leagues', season_idx, len(seasons), len(leagues))
+            for league_idx, league in enumerate(leagues, start=1):
                 league_id = league.get('id')
                 if league_id is None:
                     continue
 
+                logger.info('league %s/%s id=%s', league_idx, len(leagues), league_id)
                 season_results = self.get_json(
                     {'api': 'season_leagues_results', 'league': league_id}
                 )
                 all_data['leagues'][str(league_id)] = season_results
 
-                for event in season_results.get('events', []):
+                events = season_results.get('events', [])
+                logger.info('league id=%s events: %s', league_id, len(events))
+                for event_idx, event in enumerate(events, start=1):
                     event_id = event.get('event_id') or event.get('id')
                     if event_id is None:
                         continue
 
+                    logger.info('event %s/%s id=%s', event_idx, len(events), event_id)
                     event_results = self.get_json(
                         {'api': 'event_results', 'event_id': event_id}
                     )
@@ -119,7 +133,9 @@ class IFSCScraper:
                         elif isinstance(current, list):
                             stack.extend(current)
 
-                    for result_url in sorted(result_urls):
+                    logger.info('event id=%s result urls: %s', event_id, len(result_urls))
+                    for detail_idx, result_url in enumerate(sorted(result_urls), start=1):
+                        logger.info('full result %s/%s for event id=%s', detail_idx, len(result_urls), event_id)
                         detail = self.get_json(
                             {'api': 'event_full_results', 'result_url': result_url}
                         )
@@ -136,6 +152,7 @@ class IFSCScraper:
 
 
 def scrape_all_to_file(raw_dir: Path, out_file: Path, sleep_seconds: float, max_retries: int) -> None:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     scraper = IFSCScraper(raw_dir=raw_dir, sleep_seconds=sleep_seconds, max_retries=max_retries)
     payload = scraper.scrape_all()
     out_file.parent.mkdir(parents=True, exist_ok=True)
