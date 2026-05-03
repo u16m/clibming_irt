@@ -4,8 +4,9 @@
 項目反応理論でクライマーと課題のレベルを推定する
 
 ## 環境構築
-```
-pip install -r requirements.txt
+```bash
+mise install
+uv sync
 ```
 
 データを配置。データの場所はmain.pyに書く。
@@ -16,5 +17,5 @@ formatは
 
 ## 使い方
 ```shell
-python main.py
+uv run python main.py
 ```

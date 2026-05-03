@@ -1,5 +1,6 @@
-PYTHON ?= python
-PIP ?= pip
+PYTHON ?= uv run python
+UV ?= uv
+MISE ?= mise
 
 DATA ?= data/ifsc_full
 OUTPUT_TRAIN ?= results/patternB
@@ -13,8 +14,8 @@ MIN_ATTEMPTS ?= 5
 .PHONY: setup train predict
 
 setup:
-	$(PIP) install -r requirements.txt
-	$(PIP) install kagglehub
+	$(MISE) install
+	$(UV) sync
 
 train:
 	$(PYTHON) main.py \
