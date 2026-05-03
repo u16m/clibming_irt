@@ -9,6 +9,7 @@ dependencies = [
   "scipy>=1.11",
   "torch>=2.2",
   "kagglehub",
+  "requests>=2.31",
 ]
 
 [build-system]

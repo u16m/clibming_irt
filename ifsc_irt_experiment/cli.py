@@ -4,7 +4,6 @@ import argparse
 from pathlib import Path
 
 
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='IFSC bouldering IRT expansion runner')
     parser.add_argument('--data', type=str, default='data/ifsc_full/matrix.csv')
