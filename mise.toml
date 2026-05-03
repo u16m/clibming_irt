@@ -1,0 +1,5 @@
+[tools]
+python = "3.10"
+
+[tasks.install]
+run = "uv sync"
